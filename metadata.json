@@ -1,0 +1,5 @@
+{
+  "name": "GrowthLoop",
+  "description": "A minimalist feedback loop tool inspired by Charlie Munger. Capture fragments, use AI to organize, and generate deep insights.",
+  "requestFramePermissions": []
+}
