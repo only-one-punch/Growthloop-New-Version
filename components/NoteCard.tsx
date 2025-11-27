@@ -11,11 +11,22 @@ interface NoteCardProps {
   onUpdate?: (noteId: string, newContent: string) => void;
   onDelete?: (noteId: string) => void;
   draggable?: boolean;
+  maxLines?: number; // 最大显示行数，超出则截断
 }
 
-const NoteCard: React.FC<NoteCardProps> = ({ note, onClick, onDrop, onCategoryChange, onUpdate, onDelete, draggable = true }) => {
+const NoteCard: React.FC<NoteCardProps> = ({ note, onClick, onDrop, onCategoryChange, onUpdate, onDelete, draggable = true, maxLines = 6 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(note.content);
+
+  // 判断内容是否超过最大行数（简单估算：按字符数或换行符判断）
+  const isContentLong = (content: string): boolean => {
+    if (!content) return false;
+    const lineCount = content.split('\n').length;
+    const charThreshold = maxLines * 50; // 每行约 50 字符
+    return lineCount > maxLines || content.length > charThreshold;
+  };
+
+  const shouldTruncate = isContentLong(note.content);
 
   const handleDragStart = (e: React.DragEvent) => {
     e.dataTransfer.setData('text/plain', note.id);
@@ -186,9 +197,20 @@ const NoteCard: React.FC<NoteCardProps> = ({ note, onClick, onDrop, onCategoryCh
                 />
               </div>
             )}
-            <div onClick={startEditing} className="text-slate-700 text-[15px] leading-relaxed whitespace-pre-wrap cursor-text">
+            <div
+              onClick={() => onClick?.(note)}
+              className={`text-slate-700 text-[15px] leading-relaxed whitespace-pre-wrap cursor-pointer ${shouldTruncate ? 'line-clamp-6' : ''}`}
+            >
               {note.content || <span className="text-slate-400 italic">图片内容</span>}
             </div>
+            {shouldTruncate && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onClick?.(note); }}
+                className="mt-3 text-sm text-purple-600 hover:text-purple-700 font-medium hover:underline"
+              >
+                查看全文 →
+              </button>
+            )}
           </>
         )}
       </div>

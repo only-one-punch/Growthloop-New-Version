@@ -7,6 +7,8 @@ import NoteInput from './components/NoteInput';
 import NoteCard from './components/NoteCard';
 import InsightGenerator from './components/InsightGenerator';
 import StackDetailModal from './components/StackDetailModal';
+import NoteDetailModal from './components/NoteDetailModal';
+import ConfirmDialog from './components/ConfirmDialog';
 import ArticleArchitect from './components/HistoryWorkbench'; // Renamed import for clarity, though file is still HistoryWorkbench.tsx
 import PlatoTest from './components/PlatoTest';
 import { analyzeNoteContent, generateStackTitle, determineStackCategory } from '@/services/geminiService';
@@ -21,6 +23,8 @@ const App: React.FC = () => {
   const [view, setView] = useState<'capture' | 'insights' | 'architect' | 'plato'>('capture');
   const [isProcessing, setIsProcessing] = useState(false);
   const [selectedStack, setSelectedStack] = useState<Note | null>(null);
+  const [noteToDelete, setNoteToDelete] = useState<string | null>(null);
+  const [selectedNote, setSelectedNote] = useState<Note | null>(null);
 
   // Load notes and history
   useEffect(() => {
@@ -94,8 +98,15 @@ const App: React.FC = () => {
   };
 
   const handleDeleteNote = (noteId: string) => {
-    setNotes(prev => prev.filter(note => note.id !== noteId));
+    setNoteToDelete(noteId);
   };
+
+  const handleConfirmDelete = () => {
+    if (!noteToDelete) return;
+    setNotes(prev => prev.filter(note => note.id !== noteToDelete));
+    setNoteToDelete(null);
+  };
+
 
   // --- Stacking Logic ---
   const handleNoteDrop = async (sourceId: string, targetId: string) => {
@@ -336,7 +347,13 @@ const App: React.FC = () => {
                     <NoteCard
                       key={note.id}
                       note={note}
-                      onClick={(n) => n.type === NoteType.STACK && setSelectedStack(n)}
+                      onClick={(n) => {
+                        if (n.type === NoteType.STACK) {
+                          setSelectedStack(n);
+                        } else {
+                          setSelectedNote(n);
+                        }
+                      }}
                       onDrop={handleNoteDrop}
                       onCategoryChange={handleStackCategoryChange}
                       onUpdate={handleUpdateNote}
@@ -401,10 +418,9 @@ const App: React.FC = () => {
               {/* Chart */}
               <div className="mb-10">
                 <h4 className="text-sm font-semibold text-slate-500 mb-6">内容分布</h4>
-                <div className="h-64 w-full relative">
+                <div className="h-64 w-full relative" style={{ minHeight: 0 }}>
                   {notes.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
+                    <PieChart width={250} height={250}>
                         <Pie
                           data={getCategoryData()}
                           cx="50%"
@@ -423,7 +439,6 @@ const App: React.FC = () => {
                         />
                         <Legend verticalAlign="bottom" height={36} iconType="circle" />
                       </PieChart>
-                    </ResponsiveContainer>
                   ) : (
                     <div className="h-full w-full flex items-center justify-center text-slate-300 text-sm bg-slate-50 rounded-2xl">
                       暂无数据
@@ -462,6 +477,34 @@ const App: React.FC = () => {
           onSaveToHistory={handleSaveToHistory}
         />
       )}
+
+      {selectedNote && (
+        <NoteDetailModal
+          note={selectedNote}
+          onClose={() => setSelectedNote(null)}
+          onUpdate={(noteId, newContent) => {
+            handleUpdateNote(noteId, newContent);
+            setSelectedNote(prev => prev ? { ...prev, content: newContent } : null);
+          }}
+          onDelete={(noteId) => {
+            handleDeleteNote(noteId);
+            setSelectedNote(null);
+          }}
+        />
+      )}
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={!!noteToDelete}
+        title="删除笔记"
+        message="确定要删除这条笔记吗？此操作无法撤销。"
+        confirmText="删除"
+        cancelText="取消"
+        danger
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setNoteToDelete(null)}
+      />
+
     </div>
   );
 };

@@ -9,8 +9,34 @@ const MODEL_INSIGHTS = 'gemini-3-pro-preview';
 const IMAGE_MODEL = import.meta.env.VITE_PLATO_IMAGE_MODEL || 'nano-banana';
 
 // ---------- Helpers ----------
+/**
+ * 从 AI 回复中提取并解析 JSON。
+ * 处理常见情况：markdown 代码块包裹、前后有多余文字等。
+ */
 const safeJSON = <T>(s: string, fallback: T): T => {
-  try { return JSON.parse(s) as T } catch { return fallback; }
+  try {
+    // 1. 尝试匹配 Markdown 代码块: ```json ... ``` 或 ``` ... ```
+    const codeBlockMatch = s.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeBlockMatch) {
+      return JSON.parse(codeBlockMatch[1].trim()) as T;
+    }
+
+    // 2. 尝试直接解析（纯 JSON 情况）
+    const trimmed = s.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      return JSON.parse(trimmed) as T;
+    }
+
+    // 3. 尝试提取第一个 {...} 结构
+    const jsonMatch = s.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]) as T;
+    }
+
+    return fallback;
+  } catch {
+    return fallback;
+  }
 };
 
 function buildNotesContext(allNotes: Note[]): string {
