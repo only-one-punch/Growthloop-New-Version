@@ -50,17 +50,18 @@ const ArticleArchitect: React.FC<ArticleArchitectProps> = ({
     const oneDay = 24 * 60 * 60 * 1000;
     const sevenDays = 7 * oneDay;
 
-    const isWithinTime = (timestamp: number) => {
+    const isWithinTime = (dateString: string) => {
+      const timestamp = new Date(dateString).getTime();
       if (timeFilter === 'ALL') return true;
       if (timeFilter === 'WEEK') return (now - timestamp) < sevenDays;
       return (now - timestamp) < oneDay; // TODAY
     };
 
     // Filter loose notes for Inbox
-    const loose = allNotes.filter(n => n.type !== NoteType.STACK && isWithinTime(n.createdAt));
+    const loose = allNotes.filter(n => !n.parent_stack_id && isWithinTime(n.created_at));
 
     // Filter Stacks
-    const stacks = allNotes.filter(n => n.type === NoteType.STACK && isWithinTime(n.createdAt));
+    const stacks = allNotes.filter(n => n.type === NoteType.STACK && isWithinTime(n.created_at));
 
     return { stackList: stacks, inboxNotes: loose };
   }, [allNotes, timeFilter]);
@@ -92,7 +93,7 @@ const ArticleArchitect: React.FC<ArticleArchitectProps> = ({
   // 3. Find existing versions (history items) for the selected source
   const existingVersions = useMemo(() => {
     if (!selectedStackId || selectedStackId === 'INBOX') return [];
-    return history.filter(h => h.stackId === selectedStackId);
+    return history.filter(h => h.stack_id === selectedStackId);
   }, [selectedStackId, history]);
 
   // --- EFFECTS ---
@@ -119,54 +120,7 @@ const ArticleArchitect: React.FC<ArticleArchitectProps> = ({
       setEditorContent(activeHistoryItem.content);
     }
   }, [activeHistoryItem]);
-  // Image Generation Effect
-  useEffect(() => {
-    if (!activeHistoryItem) return;
-
-    const regex = /{{GEN_IMG: (.*?)}}/g;
-    let match: RegExpExecArray | null;
-
-    while ((match = regex.exec(editorContent)) !== null) {
-      const prompt = match[1];
-
-      // Only fetch if this prompt has not been processed yet
-      if (!imagePlaceholders[prompt]) {
-        // Set loading state immediately to prevent re-fetching
-        setImagePlaceholders(prev => ({ ...prev, [prompt]: { isLoading: true, url: null } }));
-
-        generateInContextImage(prompt)
-          .then(url => {
-            setImagePlaceholders(prev => ({
-              ...prev,
-              [prompt]: { isLoading: false, url: url || null },
-            }));
-          })
-          .catch(err => {
-            console.error('Image generation failed:', err);
-            setImagePlaceholders(prev => ({
-              ...prev,
-              [prompt]: { isLoading: false, url: null }, // Stop loading on error
-            }));
-          });
-      }
-    }
-  }, [editorContent, activeHistoryItem]);
-
-  const finalEditorContent = useMemo(() => {
-    let tempContent = editorContent;
-    Object.keys(imagePlaceholders).forEach(prompt => {
-      const placeholder = `{{GEN_IMG: ${prompt}}}`;
-      const state = imagePlaceholders[prompt];
-      if (state.isLoading) {
-        tempContent = tempContent.replace(placeholder, `\n<div style="text-align: center; padding: 1rem; background-color: #f1f5f9; border-radius: 0.5rem; margin: 1rem 0;">⏳ 正在生成图片...</div>\n`);
-      } else if (state.url) {
-        tempContent = tempContent.replace(placeholder, `\n![Generated image for prompt: ${prompt}](${state.url})\n`);
-      } else {
-        tempContent = tempContent.replace(placeholder, `\n<div style="text-align: center; padding: 1rem; background-color: #fee2e2; color: #dc2626; border-radius: 0.5rem; margin: 1rem 0;">❌ 图片生成失败</div>\n`);
-      }
-    });
-    return tempContent;
-  }, [editorContent, imagePlaceholders]);
+  const finalEditorContent = editorContent;
 
 
   // --- HANDLERS ---
@@ -179,41 +133,71 @@ const ArticleArchitect: React.FC<ArticleArchitectProps> = ({
       let finalStackId = selectedSource.id;
       let finalItems = selectedSource.items;
 
-      // Special Logic: Inbox -> Stack Conversion
       if (selectedSource.type === 'INBOX') {
         finalStackId = await onCreateStack(selectedSource.items);
-        // Note: onCreateStack updates parent state.
-        // We need to wait for parent state update or use the returned ID to optimistically update locally if needed.
-        // For simplicity, we assume the layout will refresh, but we need the ID to save history correctly.
       }
 
-      const content = await generateInsights(finalItems, targetPlatform, styleStrategy);
+      // 1. Generate text content first
+      const textContent = await generateInsights(finalItems, targetPlatform, styleStrategy);
 
-      let imageUrl: string | undefined = undefined;
+      // 2. Process all in-context image placeholders
+      const regex = /{{GEN_IMG: (.*?)}}/g;
+      const matches = [...textContent.matchAll(regex)];
+      let finalContent = textContent;
+
+      if (matches.length > 0) {
+        const imagePromises = matches.map(async (match) => {
+          const prompt = match[1];
+          try {
+            const imageUrl = await generateInContextImage(prompt);
+            return { prompt, url: imageUrl };
+          } catch (e) {
+            console.error(`Failed to generate image for prompt: ${prompt}`, e);
+            return { prompt, url: null }; // Keep prompt for error reporting
+          }
+        });
+
+        const imageResults = await Promise.all(imagePromises);
+
+        for (const result of imageResults) {
+          const { prompt, url } = result;
+          const placeholder = `{{GEN_IMG: ${prompt}}}`;
+
+          if (url) {
+            const markdownImage = `\n![${prompt}](${url})\n`;
+            finalContent = finalContent.replace(placeholder, markdownImage);
+          } else {
+            const errorHtml = `\n<div style="text-align: center; padding: 1rem; background-color: #fee2e2; color: #dc2626; border-radius: 0.5rem; margin: 1rem 0;">❌ 图片生成失败: ${prompt}</div>\n`;
+            finalContent = finalContent.replace(placeholder, errorHtml);
+          }
+        }
+      }
+
+      // 3. Generate a separate social media image if needed
+      let socialImageUrl: string | undefined = undefined;
       if (targetPlatform === InsightPlatform.SOCIAL_MEDIA) {
-         imageUrl = await generateSocialImage(content);
+        try {
+          socialImageUrl = await generateSocialImage(textContent);
+        } catch (imgError) {
+          console.error("Social image generation failed, but continuing.", imgError);
+        }
       }
 
-      const newHistoryItem: InsightHistoryItem = {
-        id: Date.now().toString(),
-        content: content,
+      // 4. Prepare and save the final history item
+      const newHistoryItem = {
+        content: finalContent,
         platform: targetPlatform,
-        createdAt: Date.now(),
         category: styleStrategy,
-        relatedNotes: finalItems,
-        stackId: finalStackId,
-        generatedImageUrl: imageUrl
+        stack_id: finalStackId,
+        generated_image_url: socialImageUrl,
       };
 
-      onSaveToHistory(newHistoryItem);
+      onSaveToHistory(newHistoryItem as unknown as InsightHistoryItem);
 
-      // If we came from Inbox, we need to switch selection to the new stack
       if (selectedSource.type === 'INBOX') {
-         setSelectedStackId(finalStackId);
+        setSelectedStackId(finalStackId);
       }
 
-      // Select the new item
-      setActiveHistoryItem(newHistoryItem);
 
     } catch (error) {
       console.error(error);
@@ -408,7 +392,7 @@ const ArticleArchitect: React.FC<ArticleArchitectProps> = ({
               <div className="flex items-center gap-3 text-sm text-slate-500">
                 <span>{stack.stackItems?.length} 条笔记</span>
                 <span className="text-slate-300">·</span>
-                <span>{stack.stackCategory || 'General'}</span>
+                <span>{stack.stack_category || 'General'}</span>
               </div>
             </div>
           ))}

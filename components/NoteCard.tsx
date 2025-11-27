@@ -55,7 +55,7 @@ const NoteCard: React.FC<NoteCardProps> = ({ note, onClick, onDrop, onCategoryCh
     e.stopPropagation();
     if (!isStack || !onCategoryChange) return;
     const categories = [StackCategory.TECH, StackCategory.LIFE, StackCategory.WISDOM, StackCategory.GENERAL];
-    const currentIndex = categories.indexOf(note.stackCategory || StackCategory.GENERAL);
+    const currentIndex = categories.indexOf(note.stack_category || StackCategory.GENERAL);
     const nextCategory = categories[(currentIndex + 1) % categories.length];
     onCategoryChange(note.id, nextCategory);
   };
@@ -138,13 +138,13 @@ const NoteCard: React.FC<NoteCardProps> = ({ note, onClick, onDrop, onCategoryCh
            {isStack && (
              <button
                onClick={handleToggleCategory}
-               className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition-colors ${getCategoryColor(note.stackCategory)}`}
+               className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition-colors ${getCategoryColor(note.stack_category)}`}
              >
-               {note.stackCategory || 'GENERAL'}
+               {note.stack_category || 'GENERAL'}
              </button>
            )}
            <span className="text-xs text-slate-400 font-medium">
-             {new Date(note.createdAt).toLocaleDateString(undefined, {month:'short', day:'numeric'})}
+             {new Date(note.created_at).toLocaleDateString(undefined, {month:'short', day:'numeric'})}
            </span>
         </div>
       </div>
@@ -188,10 +188,10 @@ const NoteCard: React.FC<NoteCardProps> = ({ note, onClick, onDrop, onCategoryCh
           </div>
         ) : (
           <>
-            {note.imageBase64 && (
+            {note.image_url && (
               <div className="mb-4 rounded-lg overflow-hidden border border-slate-100 relative group-hover:shadow-sm transition-shadow">
                 <img
-                  src={note.imageBase64}
+                  src={note.image_url}
                   alt="Attachment"
                   className="w-full h-auto object-cover"
                 />
@@ -224,12 +224,12 @@ const NoteCard: React.FC<NoteCardProps> = ({ note, onClick, onDrop, onCategoryCh
              </span>
            ) : (
              <>
-               {note.analysis?.category && (
+               {note.analysis_category && (
                   <span className="text-[10px] font-bold text-slate-500 border border-slate-200 px-2 py-0.5 rounded-full bg-slate-50">
-                    {note.analysis.category}
+                    {note.analysis_category}
                   </span>
                )}
-               {note.analysis?.tags.slice(0, 2).map((tag, idx) => (
+               {note.analysis_tags?.slice(0, 2).map((tag, idx) => (
                  <span key={idx} className="text-[10px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
                    #{tag}
                  </span>

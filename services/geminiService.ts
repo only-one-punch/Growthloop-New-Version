@@ -40,7 +40,7 @@ const safeJSON = <T>(s: string, fallback: T): T => {
 };
 
 function buildNotesContext(allNotes: Note[]): string {
-  return allNotes.map(n => `---\n内容: ${n.content}\n标签: ${(n.analysis?.tags || []).join(', ')}\n---`).join('\n');
+  return allNotes.map(n => `---\n内容: ${n.content}\n标签: ${(n.analysis_tags || []).join(', ')}\n---`).join('\n');
 }
 
 // ---------- API Implementations (same signatures as original geminiService.ts) ----------
@@ -121,8 +121,9 @@ export const generateInsights = async (notes: Note[], platform: InsightPlatform,
 # AI 配图生成机制 (AI Image Generation Strategy) - 必须严格遵守
 1.  **生成模式**: 根据当前段落的语义，实时决定画什么。
 2.  **技术标记**: 当你认为“这里需要一张图来解释”时，主动发起插入请求。请求方式为：在独立的一行中，使用占位符 '{{GEN_IMG: A concise English prompt describing the image}}'。
-3.  **插入位置**: 仅允许在 **段落与段落之间** 或 **H2 标题下方** 插入图片占位符。严禁在句子中间、行内插入。
-4.  **数量限制**: 整篇文章的图片数量限制为 2-4 张。`
+3.  **Prompt 内容规则**: Prompt 必须只描述画面的**核心内容**（what to draw），严禁包含任何关于**风格、画风、颜色、构图**的词汇（how to draw）。例如，使用 'A shield protecting a plant from a storm' 而不是 'An isometric vector art of a shield...'。
+4.  **插入位置**: 仅允许在 **段落与段落之间** 或 **H2 标题下方** 插入图片占位符。严禁在句子中间、行内插入。
+5.  **数量限制**: 整篇文章的图片数量限制为 2-4 张。`
 
   let systemPrompt = '';
   if (platform === InsightPlatform.SOCIAL_MEDIA) {
@@ -165,7 +166,7 @@ export const generateSocialImage = async (contextText: string): Promise<string |
 
 /** 文中配图 */
 export const generateInContextImage = async (prompt: string): Promise<string | undefined> => {
-  const styleSuffix = ', Digital Brutalism style, minimalist, black and white vector art, high contrast, architectural';
+  const styleSuffix = ', minimalist vector art, high contrast, black and white';
   return imagesGenerate(prompt + styleSuffix, { model: IMAGE_MODEL, size: '1024x576' });
 };
 

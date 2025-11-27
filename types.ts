@@ -27,16 +27,21 @@ export interface TagAnalysis {
 export interface Note {
   id: string;
   content: string;
-  imageBase64?: string;
-  createdAt: number;
+  image_url?: string;
+  created_at: string; // Changed from number to string for timestamptz
   type: NoteType;
-  analysis?: TagAnalysis;
-  isProcessing: boolean;
-  
+  isProcessing?: boolean; // Made optional as it's a client-side state
+
+  // Analysis properties (flattened)
+  analysis_category?: string;
+  analysis_tags?: string[];
+  analysis_sentiment?: string;
+
   // Stack related properties
-  title?: string; // Title for the stack
-  stackItems?: Note[]; // Items inside the stack
-  stackCategory?: StackCategory; // Persisted category for the stack
+  title?: string;
+  stackItems?: Note[]; // This is a client-side construct
+  stack_category?: StackCategory;
+  parent_stack_id?: string | null;
 }
 
 export interface InsightHistoryItem {

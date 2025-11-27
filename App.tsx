@@ -1,7 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
-import { PenTool, Sparkles, Layout, ChevronRight, FileText } from 'lucide-react';
+import { PenTool, Sparkles, Layout, ChevronRight, FileText, LogOut } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
+import { Session } from '@supabase/supabase-js';
 
 import NoteInput from './components/NoteInput';
 import NoteCard from './components/NoteCard';
@@ -11,13 +12,15 @@ import NoteDetailModal from './components/NoteDetailModal';
 import ConfirmDialog from './components/ConfirmDialog';
 import ArticleArchitect from './components/HistoryWorkbench'; // Renamed import for clarity, though file is still HistoryWorkbench.tsx
 import PlatoTest from './components/PlatoTest';
+import Auth from './components/Auth';
 import { analyzeNoteContent, generateStackTitle, determineStackCategory } from '@/services/geminiService';
+import { supabase } from './services/supabaseClient';
 import { Note, NoteType, CategoryData, InsightHistoryItem, StackCategory, InsightPlatform } from './types';
 
-// Helper for ID generation
-const generateId = () => Math.random().toString(36).substr(2, 9);
+
 
 const App: React.FC = () => {
+  const [session, setSession] = useState<Session | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
   const [insightHistory, setInsightHistory] = useState<InsightHistoryItem[]>([]);
   const [view, setView] = useState<'capture' | 'insights' | 'architect' | 'plato'>('capture');
@@ -26,219 +29,348 @@ const App: React.FC = () => {
   const [noteToDelete, setNoteToDelete] = useState<string | null>(null);
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
 
-  // Load notes and history
   useEffect(() => {
-    const savedNotes = localStorage.getItem('growthloop_notes');
-    if (savedNotes) setNotes(JSON.parse(savedNotes));
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session)
+    })
 
-    const savedHistory = localStorage.getItem('growthloop_history');
-    if (savedHistory) setInsightHistory(JSON.parse(savedHistory));
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session)
+    })
+
+    return () => subscription.unsubscribe()
   }, []);
 
-  // Save notes
   useEffect(() => {
-    localStorage.setItem('growthloop_notes', JSON.stringify(notes));
-  }, [notes]);
+    if (session) {
+      getNotes();
+      getInsightHistory();
+    }
+  }, [session]);
 
-  // Save history
-  useEffect(() => {
-    localStorage.setItem('growthloop_history', JSON.stringify(insightHistory));
-  }, [insightHistory]);
+  const getNotes = async () => {
+    try {
+      const { data: allNotes, error } = await supabase
+        .from('notes')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      if (allNotes) {
+        const notesMap = new Map<string, Note>();
+        allNotes.forEach(note => notesMap.set(note.id, { ...note, stackItems: [] }));
+
+        const rootNotes: Note[] = [];
+        allNotes.forEach(note => {
+          if (note.parent_stack_id && notesMap.has(note.parent_stack_id)) {
+            const parent = notesMap.get(note.parent_stack_id)!;
+            parent.stackItems?.push(notesMap.get(note.id)!);
+          } else {
+            rootNotes.push(notesMap.get(note.id)!);
+          }
+        });
+
+        setNotes(rootNotes);
+      }
+    } catch (error: any) {
+      console.error('Error fetching notes:', error.message);
+    }
+  };
+
+  const getInsightHistory = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('insights')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      if (data) {
+        setInsightHistory(data as InsightHistoryItem[]);
+      }
+    } catch (error: any) {
+      console.error('Error fetching insight history:', error.message);
+    }
+  };
 
   const handleSaveNote = async (content: string, imageBase64?: string) => {
+    if (!session) return;
     setIsProcessing(true);
-    const tempId = generateId();
-
-    const newNote: Note = {
-      id: tempId,
-      content,
-      imageBase64,
-      createdAt: Date.now(),
-      type: imageBase64 ? (content ? NoteType.MIXED : NoteType.IMAGE) : NoteType.TEXT,
-      isProcessing: true,
-      analysis: { category: '常规', tags: [], sentiment: '中性' }
-    };
-
-    setNotes(prev => [newNote, ...prev]);
 
     try {
+      // 1. Analyze content first
       const analysis = await analyzeNoteContent(content, imageBase64);
-      setNotes(prev => prev.map(n =>
-        n.id === tempId ? { ...n, analysis, isProcessing: false } : n
-      ));
-    } catch (e) {
-      console.error("Analysis failed", e);
-      setNotes(prev => prev.map(n =>
-        n.id === tempId ? { ...n, isProcessing: false } : n
-      ));
+
+      let imageUrl: string | undefined = undefined;
+
+      // 2. Handle image upload if present
+      if (imageBase64) {
+        const filePath = `${session.user.id}/${new Date().getTime()}.png`;
+        const imageFile = await (await fetch(imageBase64)).blob();
+
+        const { error: uploadError } = await supabase.storage
+          .from('notes-images') // Assuming a bucket named 'notes-images'
+          .upload(filePath, imageFile, { contentType: 'image/png' });
+
+        if (uploadError) throw uploadError;
+
+        const { data: publicUrlData } = supabase.storage
+          .from('notes-images')
+          .getPublicUrl(filePath);
+
+        imageUrl = publicUrlData.publicUrl;
+      }
+
+      // 3. Prepare note object for DB
+      const noteToInsert = {
+        user_id: session.user.id,
+        content,
+        image_url: imageUrl,
+        type: imageUrl ? (content ? NoteType.MIXED : NoteType.IMAGE) : NoteType.TEXT,
+        analysis_category: analysis.category,
+        analysis_tags: analysis.tags,
+        analysis_sentiment: analysis.sentiment,
+      };
+
+      // 4. Insert into Supabase
+      const { data, error } = await supabase
+        .from('notes')
+        .insert(noteToInsert)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      // 5. Update local state
+      if (data) {
+        setNotes(prev => [data as Note, ...prev]);
+      }
+
+    } catch (e: any) {
+      console.error("Failed to save note:", e.message);
+      alert('Error: ' + e.message);
     } finally {
       setIsProcessing(false);
     }
   };
 
-  const handleSaveToHistory = (item: InsightHistoryItem) => {
-    setInsightHistory(prev => [item, ...prev]);
+  const handleSaveToHistory = async (item: Omit<InsightHistoryItem, 'id' | 'createdAt'>) => {
+    if (!session) return;
+    try {
+      const insightToInsert = {
+        ...item,
+        user_id: session.user.id,
+      };
+
+      const { data, error } = await supabase
+        .from('insights')
+        .insert(insightToInsert)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      if (data) {
+        setInsightHistory(prev => [data as InsightHistoryItem, ...prev]);
+      }
+    } catch (error: any) {
+      console.error('Error saving insight:', error.message);
+    }
   };
 
-  const handleUpdateHistory = (id: string, newContent: string) => {
-    setInsightHistory(prev => prev.map(item =>
-      item.id === id ? { ...item, content: newContent } : item
-    ));
+  const handleUpdateHistory = async (id: string, newContent: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('insights')
+        .update({ content: newContent })
+        .eq('id', id)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      if (data) {
+        setInsightHistory(prev =>
+          prev.map(item => (item.id === id ? (data as InsightHistoryItem) : item))
+        );
+      }
+    } catch (error: any) {
+      console.error('Error updating insight:', error.message);
+    }
   };
 
-  const handleOpenWorkbench = (item: InsightHistoryItem) => {
+    const handleOpenWorkbench = (_item: InsightHistoryItem) => {
     // For now, redirect to architect view. In a real app, we might pass the selected item ID to pre-select it.
     setView('architect');
   };
 
-  const handleUpdateNote = (noteId: string, newContent: string) => {
-    setNotes(prev => prev.map(n =>
-      n.id === noteId ? { ...n, content: newContent } : n
-    ));
+  const handleUpdateNote = async (noteId: string, newContent: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('notes')
+        .update({ content: newContent })
+        .eq('id', noteId)
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      if (data) {
+        setNotes(prev => prev.map(n => (n.id === noteId ? (data as Note) : n)));
+      }
+    } catch (error: any) {
+      console.error('Error updating note:', error.message);
+    }
   };
 
   const handleDeleteNote = (noteId: string) => {
     setNoteToDelete(noteId);
   };
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (!noteToDelete) return;
-    setNotes(prev => prev.filter(note => note.id !== noteToDelete));
-    setNoteToDelete(null);
+    try {
+      const { error } = await supabase
+        .from('notes')
+        .delete()
+        .eq('id', noteToDelete);
+
+      if (error) throw error;
+
+      setNotes(prev => prev.filter(note => note.id !== noteToDelete));
+      setNoteToDelete(null);
+    } catch (error: any) {
+      console.error('Error deleting note:', error.message);
+    }
   };
 
 
   // --- Stacking Logic ---
   const handleNoteDrop = async (sourceId: string, targetId: string) => {
-    const sourceIndex = notes.findIndex(n => n.id === sourceId);
-    const targetIndex = notes.findIndex(n => n.id === targetId);
-    if (sourceIndex === -1 || targetIndex === -1) return;
+    if (!session) return;
 
-    const sourceNote = notes[sourceIndex];
-    const targetNote = notes[targetIndex];
-    let newNotes = [...notes];
-    let updatedStack: Note;
-    let itemsForAI: Note[] = [];
+    const { data: targetNote } = await supabase.from('notes').select('*').eq('id', targetId).single();
+    if (!targetNote) return;
 
-    if (targetNote.type === NoteType.STACK) {
-      const existingItems = targetNote.stackItems || [];
-      const newItems = sourceNote.type === NoteType.STACK
-        ? [...(sourceNote.stackItems || []), ...existingItems]
-        : [sourceNote, ...existingItems];
+    try {
+      if (targetNote.type === NoteType.STACK) {
+        // Case 1: Drop onto an existing stack
+        const { error } = await supabase
+          .from('notes')
+          .update({ parent_stack_id: targetId })
+          .eq('id', sourceId);
+        if (error) throw error;
+      } else {
+        // Case 2: Drop onto a regular note to create a new stack
+        const [title, category] = await Promise.all([
+          generateStackTitle([/* Pass relevant notes info */]),
+          determineStackCategory([/* Pass relevant notes info */])
+        ]);
 
-      updatedStack = { ...targetNote, stackItems: newItems };
-      itemsForAI = newItems;
+        const { data: newStack, error: stackError } = await supabase
+          .from('notes')
+          .insert({
+            user_id: session.user.id,
+            type: NoteType.STACK,
+            title: title,
+            stack_category: category,
+            content: 'New Stack'
+          })
+          .select()
+          .single();
 
-      newNotes.splice(sourceIndex, 1);
-      const newTargetIndex = newNotes.findIndex(n => n.id === targetId);
-      newNotes[newTargetIndex] = updatedStack;
-    } else {
-      const items = [sourceNote, targetNote];
-      itemsForAI = items;
-      const stackId = generateId();
-      updatedStack = {
-        id: stackId,
-        content: "正在生成标题...",
-        createdAt: Date.now(),
-        type: NoteType.STACK,
-        isProcessing: false,
-        stackItems: items,
-        stackCategory: StackCategory.GENERAL,
-        analysis: { category: targetNote.analysis?.category || '组合', tags: ['CardStack'], sentiment: '中性' }
-      };
+        if (stackError) throw stackError;
 
-      newNotes = newNotes.filter(n => n.id !== sourceId && n.id !== targetId);
-      newNotes.splice(Math.min(sourceIndex, targetIndex), 0, updatedStack);
-    }
-
-    setNotes(newNotes);
-
-    Promise.all([
-      generateStackTitle(itemsForAI),
-      determineStackCategory(itemsForAI)
-    ]).then(([title, category]) => {
-      setNotes(currentNotes => currentNotes.map(n =>
-        n.id === updatedStack.id ? { ...n, title: title, stackCategory: category } : n
-      ));
-    });
-  };
-
-  const handleStackCategoryChange = (noteId: string, newCategory: StackCategory) => {
-    setNotes(prev => prev.map(n => n.id === noteId ? { ...n, stackCategory: newCategory } : n));
-    if (selectedStack && selectedStack.id === noteId) {
-      setSelectedStack(prev => prev ? { ...prev, stackCategory: newCategory } : null);
+        if (newStack) {
+          const { error: updateError } = await supabase
+            .from('notes')
+            .update({ parent_stack_id: newStack.id })
+            .in('id', [sourceId, targetId]);
+          if (updateError) throw updateError;
+        }
+      }
+      // Refresh data from DB
+      await getNotes();
+    } catch (error: any) {
+      console.error('Error handling note drop:', error.message);
     }
   };
 
-  const handleRemoveFromStack = (noteId: string) => {
-    if (!selectedStack) return;
-    const noteToRemove = selectedStack.stackItems?.find(n => n.id === noteId);
-    if (!noteToRemove) return;
-
-    const updatedItems = selectedStack.stackItems?.filter(n => n.id !== noteId) || [];
-    let updatedNotes = [...notes];
-
-    if (updatedItems.length === 0) {
-      updatedNotes = updatedNotes.filter(n => n.id !== selectedStack.id);
-    } else if (updatedItems.length === 1) {
-      const remainingNote = updatedItems[0];
-      const stackIndex = updatedNotes.findIndex(n => n.id === selectedStack.id);
-      updatedNotes[stackIndex] = remainingNote;
-      setSelectedStack(null);
-    } else {
-      const updatedStack = { ...selectedStack, stackItems: updatedItems };
-      const stackIndex = updatedNotes.findIndex(n => n.id === selectedStack.id);
-      updatedNotes[stackIndex] = updatedStack;
-      setSelectedStack(updatedStack);
+  const handleStackCategoryChange = async (noteId: string, newCategory: StackCategory) => {
+    try {
+      const { error } = await supabase
+        .from('notes')
+        .update({ stack_category: newCategory })
+        .eq('id', noteId);
+      if (error) throw error;
+      await getNotes(); // Refresh
+    } catch (error: any) {
+      console.error('Error updating stack category:', error.message);
     }
-
-    updatedNotes.unshift(noteToRemove);
-    setNotes(updatedNotes);
   };
 
-  /**
-   * Converts a list of loose notes (e.g. from Inbox) into a formal Stack.
-   * Returns the new Stack ID.
-   */
+  const handleRemoveFromStack = async (noteId: string) => {
+    try {
+      const { error } = await supabase
+        .from('notes')
+        .update({ parent_stack_id: null })
+        .eq('id', noteId);
+      if (error) throw error;
+      setSelectedStack(null); // Close modal
+      await getNotes(); // Refresh
+    } catch (error: any) {
+      console.error('Error removing note from stack:', error.message);
+    }
+  };
+
   const handleCreateStackFromNotes = async (sourceNotes: Note[]): Promise<string> => {
-    const stackId = generateId();
-    const stackTitle = `Inbox Generated ${new Date().toLocaleDateString()}`;
+    if (!session) return '';
+    try {
+      const [title, category] = await Promise.all([
+        generateStackTitle(sourceNotes),
+        determineStackCategory(sourceNotes)
+      ]);
 
-    // Create the new stack note
-    const newStack: Note = {
-      id: stackId,
-      title: stackTitle,
-      content: stackTitle,
-      createdAt: Date.now(),
-      type: NoteType.STACK,
-      isProcessing: false,
-      stackItems: sourceNotes,
-      stackCategory: StackCategory.GENERAL,
-      analysis: { category: 'Inbox', tags: ['Generated'], sentiment: '中性' }
-    };
+      const { data: newStack, error: stackError } = await supabase
+        .from('notes')
+        .insert({
+          user_id: session.user.id,
+          type: NoteType.STACK,
+          title: title,
+          stack_category: category,
+          content: 'New Stack from Architect'
+        })
+        .select()
+        .single();
 
-    // Remove source notes from top-level list and add the new stack
-    const sourceIds = new Set(sourceNotes.map(n => n.id));
-    setNotes(prev => [newStack, ...prev.filter(n => !sourceIds.has(n.id))]);
+      if (stackError) throw stackError;
 
-    // Async optimize title and category
-    Promise.all([
-      generateStackTitle(sourceNotes),
-      determineStackCategory(sourceNotes)
-    ]).then(([title, category]) => {
-      setNotes(currentNotes => currentNotes.map(n =>
-        n.id === stackId ? { ...n, title: title, stackCategory: category } : n
-      ));
-    });
+      if (newStack) {
+        const sourceIds = sourceNotes.map(n => n.id);
+        const { error: updateError } = await supabase
+          .from('notes')
+          .update({ parent_stack_id: newStack.id })
+          .in('id', sourceIds);
+        if (updateError) throw updateError;
 
-    return stackId;
+        await getNotes();
+        return newStack.id;
+      }
+    } catch (error: any) {
+      console.error('Error creating stack from notes:', error.message);
+    }
+    return '';
   };
 
   // --- Chart Data Preparation ---
   const getCategoryData = (): CategoryData[] => {
     const data: Record<string, number> = {};
     notes.forEach(note => {
-      const cat = note.type === NoteType.STACK ? (note.stackCategory || '未分类') : (note.analysis?.category || '未分类');
+      const cat = note.type === NoteType.STACK ? (note.stack_category || '未分类') : (note.analysis_category || '未分类');
       data[cat] = (data[cat] || 0) + 1;
     });
 
@@ -250,6 +382,10 @@ const App: React.FC = () => {
       fill: COLORS[index % COLORS.length]
     }));
   };
+
+  if (!session) {
+    return <Auth />;
+  }
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900 font-sans overflow-hidden">
@@ -304,6 +440,12 @@ const App: React.FC = () => {
             Plato 测试
           </button>
 
+          <button
+            onClick={() => supabase.auth.signOut()}
+            className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200 text-slate-500 hover:bg-slate-50 hover:text-slate-900`}>
+            <LogOut className="w-4 h-4" />
+            Sign Out
+          </button>
         </nav>
 
         <div className="p-4 border-t border-slate-50">
