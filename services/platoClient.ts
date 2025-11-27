@@ -27,7 +27,7 @@ export const ModelRegistry = {
   // GPT_4O_MINI: 'gpt-4o-mini',
 } as const;
 
-const BASE_URL = (import.meta.env.VITE_PLATO_BASE_URL || '').replace(/\/$/, '');
+const BASE_URL = '/api'; // All requests are now routed through our own backend via proxy
 const API_KEY = import.meta.env.VITE_PLATO_API_KEY || '';
 
 if (!BASE_URL) {

@@ -15,6 +15,13 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3000,
       host: '0.0.0.0',
+      proxy: {
+        '/api': {
+          target: env.VITE_PLATO_BASE_URL,
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api/, ''),
+        },
+      },
     },
     plugins: [react()],
     define: {
