@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Note, NoteType, StackCategory } from '../types';
-import { Loader2, Layers } from 'lucide-react';
+import { Loader2, Layers, X } from 'lucide-react';
 
 interface NoteCardProps {
   note: Note;
@@ -9,20 +9,21 @@ interface NoteCardProps {
   onDrop?: (sourceId: string, targetId: string) => void;
   onCategoryChange?: (noteId: string, newCategory: StackCategory) => void;
   onUpdate?: (noteId: string, newContent: string) => void;
+  onDelete?: (noteId: string) => void;
   draggable?: boolean;
 }
 
-const NoteCard: React.FC<NoteCardProps> = ({ note, onClick, onDrop, onCategoryChange, onUpdate, draggable = true }) => {
+const NoteCard: React.FC<NoteCardProps> = ({ note, onClick, onDrop, onCategoryChange, onUpdate, onDelete, draggable = true }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(note.content);
-  
+
   const handleDragStart = (e: React.DragEvent) => {
     e.dataTransfer.setData('text/plain', note.id);
     e.dataTransfer.effectAllowed = 'move';
   };
 
   const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault(); 
+    e.preventDefault();
     e.currentTarget.classList.add('ring-2', 'ring-purple-400', 'ring-offset-2');
   };
 
@@ -79,7 +80,7 @@ const NoteCard: React.FC<NoteCardProps> = ({ note, onClick, onDrop, onCategoryCh
   };
 
   return (
-    <div 
+    <div
       draggable={draggable}
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
@@ -98,6 +99,20 @@ const NoteCard: React.FC<NoteCardProps> = ({ note, onClick, onDrop, onCategoryCh
         ${isEditing ? 'ring-2 ring-purple-400 shadow-lg' : ''}
       `}
     >
+      {/* Delete Button */}
+      {onDelete && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(note.id);
+          }}
+          className="absolute top-3 right-3 p-1 rounded-full text-slate-400 hover:bg-slate-200 hover:text-slate-700 opacity-0 group-hover:opacity-100 transition-opacity z-10"
+          aria-label="Delete note"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      )}
+
       {/* Stack Visual Effect */}
       {isStack && (
         <>
@@ -110,7 +125,7 @@ const NoteCard: React.FC<NoteCardProps> = ({ note, onClick, onDrop, onCategoryCh
       <div className="px-5 pt-5 pb-2 flex items-center justify-between">
         <div className="flex items-center gap-2">
            {isStack && (
-             <button 
+             <button
                onClick={handleToggleCategory}
                className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition-colors ${getCategoryColor(note.stackCategory)}`}
              >

@@ -4,7 +4,8 @@ import { InsightHistoryItem, Note, NoteType, StackCategory, InsightPlatform } fr
 import {
   Copy, Check, Save, ChevronRight, Layout, Loader2, Sparkles
 } from 'lucide-react';
-import { generateInsights, generateSocialImage } from '../services/geminiService';
+import { generateInsights, generateSocialImage, generateInContextImage } from '../services/geminiService';
+import ArticleRenderer from './ArticleRenderer';
 
 
 interface ArticleArchitectProps {
@@ -15,17 +16,17 @@ interface ArticleArchitectProps {
   onUpdateHistory: (id: string, newContent: string) => void;
 }
 
-const ArticleArchitect: React.FC<ArticleArchitectProps> = ({ 
-  allNotes, 
-  history, 
-  onSaveToHistory, 
+const ArticleArchitect: React.FC<ArticleArchitectProps> = ({
+  allNotes,
+  history,
+  onSaveToHistory,
   onCreateStack,
-  onUpdateHistory 
+  onUpdateHistory
 }) => {
   // --- STATE ---
   const [timeFilter, setTimeFilter] = useState<'TODAY' | 'WEEK' | 'ALL'>('TODAY');
   const [selectedStackId, setSelectedStackId] = useState<string | null>(null);
-  
+
   // Configuration State (Zero State)
   const [targetPlatform, setTargetPlatform] = useState<InsightPlatform>(InsightPlatform.NEWSLETTER);
   const [styleStrategy, setStyleStrategy] = useState<StackCategory>(StackCategory.TECH);
@@ -36,12 +37,13 @@ const ArticleArchitect: React.FC<ArticleArchitectProps> = ({
   const [editorContent, setEditorContent] = useState('');
   const [isSaved, setIsSaved] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
+  const [imagePlaceholders, setImagePlaceholders] = useState<Record<string, { isLoading: boolean; url: string | null }>>({});
 
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // --- DERIVED DATA ---
-  
+
   // 1. Filtered Stacks & Inbox
   const { stackList, inboxNotes } = useMemo(() => {
     const now = Date.now();
@@ -56,7 +58,7 @@ const ArticleArchitect: React.FC<ArticleArchitectProps> = ({
 
     // Filter loose notes for Inbox
     const loose = allNotes.filter(n => n.type !== NoteType.STACK && isWithinTime(n.createdAt));
-    
+
     // Filter Stacks
     const stacks = allNotes.filter(n => n.type === NoteType.STACK && isWithinTime(n.createdAt));
 
@@ -117,6 +119,55 @@ const ArticleArchitect: React.FC<ArticleArchitectProps> = ({
       setEditorContent(activeHistoryItem.content);
     }
   }, [activeHistoryItem]);
+  // Image Generation Effect
+  useEffect(() => {
+    if (!activeHistoryItem) return;
+
+    const regex = /{{GEN_IMG: (.*?)}}/g;
+    let match: RegExpExecArray | null;
+
+    while ((match = regex.exec(editorContent)) !== null) {
+      const prompt = match[1];
+
+      // Only fetch if this prompt has not been processed yet
+      if (!imagePlaceholders[prompt]) {
+        // Set loading state immediately to prevent re-fetching
+        setImagePlaceholders(prev => ({ ...prev, [prompt]: { isLoading: true, url: null } }));
+
+        generateInContextImage(prompt)
+          .then(url => {
+            setImagePlaceholders(prev => ({
+              ...prev,
+              [prompt]: { isLoading: false, url: url || null },
+            }));
+          })
+          .catch(err => {
+            console.error('Image generation failed:', err);
+            setImagePlaceholders(prev => ({
+              ...prev,
+              [prompt]: { isLoading: false, url: null }, // Stop loading on error
+            }));
+          });
+      }
+    }
+  }, [editorContent, activeHistoryItem]);
+
+  const finalEditorContent = useMemo(() => {
+    let tempContent = editorContent;
+    Object.keys(imagePlaceholders).forEach(prompt => {
+      const placeholder = `{{GEN_IMG: ${prompt}}}`;
+      const state = imagePlaceholders[prompt];
+      if (state.isLoading) {
+        tempContent = tempContent.replace(placeholder, `\n<div style="text-align: center; padding: 1rem; background-color: #f1f5f9; border-radius: 0.5rem; margin: 1rem 0;">⏳ 正在生成图片...</div>\n`);
+      } else if (state.url) {
+        tempContent = tempContent.replace(placeholder, `\n![Generated image for prompt: ${prompt}](${state.url})\n`);
+      } else {
+        tempContent = tempContent.replace(placeholder, `\n<div style="text-align: center; padding: 1rem; background-color: #fee2e2; color: #dc2626; border-radius: 0.5rem; margin: 1rem 0;">❌ 图片生成失败</div>\n`);
+      }
+    });
+    return tempContent;
+  }, [editorContent, imagePlaceholders]);
+
 
   // --- HANDLERS ---
 
@@ -131,13 +182,13 @@ const ArticleArchitect: React.FC<ArticleArchitectProps> = ({
       // Special Logic: Inbox -> Stack Conversion
       if (selectedSource.type === 'INBOX') {
         finalStackId = await onCreateStack(selectedSource.items);
-        // Note: onCreateStack updates parent state. 
+        // Note: onCreateStack updates parent state.
         // We need to wait for parent state update or use the returned ID to optimistically update locally if needed.
         // For simplicity, we assume the layout will refresh, but we need the ID to save history correctly.
       }
 
       const content = await generateInsights(finalItems, targetPlatform, styleStrategy);
-      
+
       let imageUrl: string | undefined = undefined;
       if (targetPlatform === InsightPlatform.SOCIAL_MEDIA) {
          imageUrl = await generateSocialImage(content);
@@ -155,12 +206,12 @@ const ArticleArchitect: React.FC<ArticleArchitectProps> = ({
       };
 
       onSaveToHistory(newHistoryItem);
-      
+
       // If we came from Inbox, we need to switch selection to the new stack
       if (selectedSource.type === 'INBOX') {
          setSelectedStackId(finalStackId);
       }
-      
+
       // Select the new item
       setActiveHistoryItem(newHistoryItem);
 
@@ -266,15 +317,20 @@ const ArticleArchitect: React.FC<ArticleArchitectProps> = ({
       </div>
 
       {/* Editor Area */}
-      <div className="flex-1 overflow-y-auto p-8 md:p-12">
+      <div className="flex-1 grid grid-cols-2 gap-0 overflow-hidden">
+        {/* Left: Markdown Editor */}
         <textarea
           ref={textareaRef}
           value={editorContent}
           onChange={(e) => setEditorContent(e.target.value)}
-          className="w-full max-w-3xl mx-auto h-full resize-none outline-none text-lg leading-relaxed text-slate-800 placeholder:text-slate-400 bg-transparent"
+          className="w-full h-full resize-none outline-none text-base leading-relaxed text-slate-800 placeholder:text-slate-400 bg-white p-8 md:p-12 overflow-y-auto"
           spellCheck={false}
           placeholder="开始写作..."
         />
+        {/* Right: Live Preview */}
+        <div className="w-full h-full bg-slate-50 border-l border-slate-200 overflow-y-auto">
+          <ArticleRenderer content={finalEditorContent} />
+        </div>
       </div>
 
       {/* Bottom Toolbar */}
@@ -286,7 +342,7 @@ const ArticleArchitect: React.FC<ArticleArchitectProps> = ({
            {isSaved ? <Check className="w-4 h-4 text-green-500" /> : <Save className="w-4 h-4" />} {isSaved ? '已保存' : '保存'}
         </button>
         <button
-          onClick={() => { navigator.clipboard.writeText(editorContent); setIsCopied(true); setTimeout(() => setIsCopied(false), 2000); }}
+          onClick={() => { navigator.clipboard.writeText(finalEditorContent); setIsCopied(true); setTimeout(() => setIsCopied(false), 2000); }}
           className="px-4 py-2 text-sm font-bold text-white bg-slate-800 rounded-lg hover:bg-slate-900 transition-colors flex items-center gap-2"
         >
            {isCopied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />} {isCopied ? '已复制!' : '复制 Markdown'}

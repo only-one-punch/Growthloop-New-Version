@@ -1,0 +1,40 @@
+/* In globals.css or your main stylesheet */
+
+.prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {
+  color: inherit; /* Or a specific color like #111827 for dark text */
+  font-weight: 600; /* Or your desired font-weight */
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+
+.prose h1 {
+  font-size: 2.25rem; /* 36px */
+  line-height: 2.5rem; /* 40px */
+}
+
+.prose h2 {
+  font-size: 1.875rem; /* 30px */
+  line-height: 2.25rem; /* 36px */
+}
+
+.prose h3 {
+  font-size: 1.5rem; /* 24px */
+  line-height: 2rem; /* 32px */
+}
+
+.prose p {
+    margin-top: 1em;
+    margin-bottom: 1em;
+}
+
+.prose strong {
+    font-weight: 600;
+}
+
+.prose blockquote {
+    border-left: 4px solid #ccc;
+    padding-left: 1em;
+    margin-left: 0;
+    font-style: italic;
+}
+

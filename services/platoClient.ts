@@ -127,17 +127,16 @@ export async function imagesGenerate(prompt: string, opts: ImageOptions = {}): P
     'Authorization': `Bearer ${API_KEY}`,
     'Content-Type': 'application/json',
   };
-  type OpenAIImageResp = { data?: Array<{ b64_json?: string }> };
+  type OpenAIImageResp = { data?: Array<{ url?: string }> };
   try {
     const data = await postWithRetry<OpenAIImageResp>(url, {
       model,
       prompt,
       size: opts.size || '1024x1024',
-      response_format: 'b64_json'
+      response_format: 'url'
     }, headers, opts.timeout_ms ?? 60000);
-    const b64 = data?.data?.[0]?.b64_json;
-    if (!b64) return undefined;
-    return `data:image/png;base64,${b64}`;
+
+    return data?.data?.[0]?.url;
   } catch (e) {
     console.error('[Plato imagesGenerate] error', e);
     return undefined;

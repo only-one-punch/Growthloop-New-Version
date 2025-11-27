@@ -93,6 +93,10 @@ const App: React.FC = () => {
     ));
   };
 
+  const handleDeleteNote = (noteId: string) => {
+    setNotes(prev => prev.filter(note => note.id !== noteId));
+  };
+
   // --- Stacking Logic ---
   const handleNoteDrop = async (sourceId: string, targetId: string) => {
     const sourceIndex = notes.findIndex(n => n.id === sourceId);
@@ -336,6 +340,7 @@ const App: React.FC = () => {
                       onDrop={handleNoteDrop}
                       onCategoryChange={handleStackCategoryChange}
                       onUpdate={handleUpdateNote}
+                      onDelete={handleDeleteNote}
                     />
                   ))}
 
