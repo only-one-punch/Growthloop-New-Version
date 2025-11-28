@@ -27,7 +27,7 @@ export const ModelRegistry = {
   // GPT_4O_MINI: 'gpt-4o-mini',
 } as const;
 
-const BASE_URL = '/api'; // All requests are now routed through our own backend via proxy
+const BASE_URL = import.meta.env.VITE_PLATO_BASE_URL || '/api'; // All requests are now routed through our own backend via proxy
 const API_KEY = import.meta.env.VITE_PLATO_API_KEY || '';
 
 if (!BASE_URL) {
@@ -77,8 +77,8 @@ async function postWithRetry<T>(url: string, body: any, headers: Record<string,s
  * - options.model 不传则使用环境变量或默认模型
  */
 export async function chatCompletion(messages: ChatMessage[], options: ChatOptions = {}): Promise<string> {
-  if (!BASE_URL || !API_KEY) {
-    return 'Plato 接口未配置：请设置 VITE_PLATO_API_KEY 与 VITE_PLATO_BASE_URL';
+  if (!API_KEY) {
+    return 'Plato 接口未配置：请设置 VITE_PLATO_API_KEY';
   }
 
   const model = options.model || ModelRegistry.DEFAULT;
