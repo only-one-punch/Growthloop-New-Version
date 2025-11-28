@@ -82,7 +82,7 @@ export async function chatCompletion(messages: ChatMessage[], options: ChatOptio
   }
 
   const model = options.model || ModelRegistry.DEFAULT;
-  const url = `${BASE_URL.replace(/\/$/, '')}/chat/completions`;
+  const url = `${BASE_URL}chat/completions`;
   const headers: Record<string,string> = {
     'Authorization': `Bearer ${API_KEY}`,
     'Content-Type': 'application/json',
@@ -122,7 +122,7 @@ export interface ImageOptions {
 export async function imagesGenerate(prompt: string, opts: ImageOptions = {}): Promise<string | undefined> {
   if (!BASE_URL || !API_KEY) return undefined;
   const model = opts.model || (import.meta.env.VITE_PLATO_IMAGE_MODEL || 'nano-banana-2-2k');
-  const url = `${BASE_URL.replace(/\/$/, '')}/images/generations`;
+  const url = `${BASE_URL}images/generations`;
   const headers: Record<string,string> = {
     'Authorization': `Bearer ${API_KEY}`,
     'Content-Type': 'application/json',
